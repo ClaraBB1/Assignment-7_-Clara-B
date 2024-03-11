@@ -1,0 +1,182 @@
+---
+title: "Assignment 7_Clara Boisclair"
+format: html
+editor: visual
+---
+
+```{r}
+# package "lidR" already installed
+# load libraries
+library(units)
+library(lidR)
+library(terra)
+library(mapview)
+```
+
+```{r}
+# Q 1. Download the .LAS file from Moodle with your name on it.
+
+las <- readLAS("Clara Boisclair.las")
+las
+
+# a. How many points are in your LAS file? Provide a line of code to determine this.
+
+num_points <- npoints(las)
+num_points
+
+
+# b. What is the maximum elevation within your point cloud? Provide a line of code to determine this.
+max_elevation <- max(las$Z)
+max_elevation
+```
+
+```{r}
+# 2.	This question will get you producing various DEM’s:
+#v a.	Classify ground points using the cloth simulated function (CSF) algorithm and produce a DEM using the triangular irregular network (TIN) algorithm.
+
+# classify ground points
+las_ground <- classify_ground(las, algorithm = csf())
+
+
+# create a DEM, rasterize terrain function creat a Spat Raster object, 2 D
+dem <- rasterize_terrain(las_ground, res = 1, algorithm = tin())
+
+# can plot dem:
+plot(dem)
+
+
+# b.	Classify ground points using a progressive morphological filter (PMF) algorithm and produce a DEM using the TIN algorithm.
+pmf_las_ground <- classify_ground(las, algorithm = pmf(ws=5, th=3))
+
+# Generate DEM using TIN algorithm
+pmf_dem <- rasterize_terrain(las_ground, res = 1, algorithm = tin())
+plot(pmf_dem)
+
+# c.	Classify ground points using the CSF algorithm and produce a DEM using the inverse distance weighting algorithm.
+
+# Classify ground:
+las_ground <- classify_ground(las, algorithm = csf())
+
+## DEM
+dem_idw <- rasterize_terrain(las_ground, algorithm = knnidw(k = 10L, p = 2))
+plot(dem_idw)
+
+# d.	Briefly describe how the PMF algorithm works. 
+```
+
+The Progressive Morphological Filter (PMF) algorithm is a method commonly used in LiDAR data processing to classify ground points. It works by iteratively removing points that are unlikely to belong to the ground surface based on their elevation and the surrounding points.
+
+```{r}
+# 3.	This question gets you producing some canopy height models (CHM’s):
+
+#a.	Normalize the point cloud using the inverse distance weighting algorithm, and then produce a CHM using the point-to-raster algorithm.
+nlas<- normalize_height(las_ground, knnidw())
+
+# plot a histogram to check if it worked
+hist(filter_ground(nlas)$Z, breaks = seq(-0.6, 0.6, 0.01), main = "", xlab = "Elevation")
+
+plot(nlas)
+
+chm <- rasterize_canopy(nlas, res = 1, algorithm = p2r())
+#las_norm is the normalized point cloud
+col <- height.colors(25) #gives a color palet with a legend for height of canopy. Blue point or water are blue patches
+plot(chm, col = col)
+
+#b.	Normalize the point cloud using the TIN algorithm and then produce a CHM using the TIN algorithm as well (i.e.: the “dsmtin” algorithm).
+n_tin <- normalize_height(las_ground, algorithm =  tin())
+chm_tin <- rasterize_canopy(n_tin, res = 1, algorithm = dsmtin())
+col<- height.colors(25) #gives a color palet with a legend for height of canopy. Blue point or water are blue patches
+plot(chm, col = col)
+
+#c.	Normalize the point cloud using the TIN algorithm, and then produce a CHM using the point-to-raster algorithm.
+n_tin <- normalize_height(las_ground, algorithm =  tin())
+chm_p2r <- rasterize_canopy(n_tin, res = 1, algorithm = p2r())
+plot(chm_p2r)
+
+#d.	Briefly describe how the inverse distance weighting algorithm works.
+```
+
+The Inverse Distance Weighting (IDW) algorithm is a spatial interpolation method used to estimate values at unknown locations based on the values of surrounding known locations. It works by assigning weights to nearby known points inversely proportional to their distance from the target location. These weighted values are then used to compute the estimated value at the target location.
+
+```{r}
+#4.	Choose one of the three normalization/CHM combinations from question three to move forward with. 
+
+#Chose: Normalize the point cloud using the inverse distance weighting algorithm, and then produce a CHM using the point-to-raster algorithm.
+
+#For each of the above ITS algorithms, viewing the help file for that particular algorithm will shed some light on the required parameters needed to make that algorithm work, i.e.: 
+#a.	?dalponte2016
+#b.	?li2012
+#e.	?silva2016
+
+
+#a.	Perform individual tree segmentation (ITS) of the normalized point cloud using the Dalponte 2016 algorithm.
+ttops <- locate_trees(chm, lmf(5))   #lmf=local maximum filter
+# identifying every single trees
+
+mapview(ttops) 
+plot(ttops) # can see them, but not as interactive
+
+# Then, use ITS with the CHM:
+?dalponte2016
+las_its_dalponte <- segment_trees(nlas, dalponte2016(chm, ttops))
+plot(las_its_dalponte, color = "treeID")
+
+#b.	Perform ITS of the normalized point cloud using the Li et al. 2012 algorithm.
+?li2012
+las_its_li <- segment_trees(nlas, li2012())
+plot(las_its_li, color = "treeID")
+
+#c.	Perform ITS of the normalized point cloud using the Silva 2016 algorithm.
+
+?silva2016
+las_its_silva<- segment_trees(nlas, algorithm = silva2016(chm, ttops))
+plot(las_its_li, color = "treeID")
+
+#d.	Briefly describe how the Silva 2016 algorithm works.
+```
+
+The Silva 2016 algorithm is an Individual Tree Segmentation (ITS) method designed for LiDAR point cloud data. It operates by iteratively segmenting the point cloud into individual tree crowns based on local maxima in height.
+
+```{r}
+# 5.	Retrieve the crown metrics for each of the tree segmented point clouds produced in number 4. 
+# How many trees were identified in each algorithm? What is the overall tree density in each of the segmented point clouds?
+
+install_unit("stems")  # we create a unit stems
+
+# a)
+metrics_dalponte <- crown_metrics(las_its_dalponte, .stdtreemetrics, geom = "concave")
+mapview(metrics_dalponte, zcol = "treeID")
+
+# number of trees in this algorythm: 
+n_trees_dalponte <- set_units(nrow(metrics_dalponte), "stems")
+
+# To look at what the area of the LAS file is:
+st_area(las_its_dalponte)
+
+# That is in m^2, if we need ha. We can convert this with the set_units function:
+dalponte_area <- set_units(st_area(las_its_dalponte), "ha")
+
+# To find out how many stems per hectar
+n_trees_dalponte / dalponte_area
+
+# If we want to round this:
+round(n_trees_dalponte / dalponte_area)
+
+
+# b)
+metrics_li <- crown_metrics(las_its_li, .stdtreemetrics, geom = "concave")
+# number of trees in this algorythm: 
+n_trees_li <- set_units(nrow(metrics_li), "stems")
+#Tree density in point cloud with this alhorythm
+round(set_units(nrow(metrics_li), "stems") / set_units(st_area(las_its_li), "ha"))
+
+
+# c)
+metrics_silva <- crown_metrics(las_its_silva, .stdtreemetrics, geom = "concave")
+# number of trees in this algorythm: 
+n_trees_silva <- set_units(nrow(metrics_silva), "stems")
+#Tree density in point cloud with this alhorythm
+round(set_units(nrow(metrics_silva), "stems") / set_units(st_area(las_its_silva), "ha"))
+```
+
+Dalponte and Silva algorythms came to same numbers and density, but Li had different numbers.
